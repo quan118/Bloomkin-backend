@@ -10,7 +10,7 @@
     "build": "npm --prefix functions run build",
     "test": "npm --prefix functions test && npm run test:rules && npm run test:integration",
     "test:rules": "firebase emulators:exec --only firestore,storage --project demo-bloomkin \"vitest run tests/firestore.rules.test.ts\"",
-    "emulators": "npm run build && firebase emulators:start --project dev --import ./.emulator-data --export-on-exit",
+    "emulators": "npm run build && firebase emulators:start --project dev $([ -d .emulator-data ] && echo --import ./.emulator-data) --export-on-exit ./.emulator-data",
     "deploy:dev": "firebase deploy --project dev",
     "deploy:prod": "firebase deploy --project prod",
     "test:integration": "npm run build && firebase emulators:exec --only auth,firestore,functions --project demo-bloomkin \"vitest run tests/integration\""
