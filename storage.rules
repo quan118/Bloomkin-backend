@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// Photos live under babies/{babyId}/... and follow the same per-baby roles as Firestore.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function memberRole(babyId) {
+      return firestore.get(/databases/(default)/documents/babies/$(babyId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function isMember(babyId) {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/babies/$(babyId)/members/$(request.auth.uid));
+    }
+
+    match /babies/{babyId}/{allPaths=**} {
+      allow read: if isMember(babyId);
+      allow write: if isMember(babyId)
+        && memberRole(babyId) in ['owner', 'editor']
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isMember(babyId) && memberRole(babyId) in ['owner', 'editor'];
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

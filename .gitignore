@@ -1,0 +1,13 @@
+node_modules/
+functions/lib/
+*.log
+.firebase/
+.emulator-data/
+# Local secrets for the Functions emulator (never commit)
+functions/.secret.local
+functions/.env.local
+.DS_Store
+firestore-debug.log
+storage-debug.log
+ui-debug.log
+firebase-debug.log

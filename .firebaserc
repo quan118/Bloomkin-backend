@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "bloomkin-dev",
+    "dev": "bloomkin-dev",
+    "prod": "bloomkin-prod"
+  }
+}

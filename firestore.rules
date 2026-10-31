@@ -1,0 +1,185 @@
+rules_version = '2';
+
+// Data model (see README.md):
+//   users/{uid}                          profile; `premium` is server-only
+//   users/{uid}/memberships/{babyId}     index of the babies a user follows
+//   users/{uid}/devices/{deviceId}       push tokens
+//   babies/{babyId}                      baby profile; `premium` is server-only
+//   babies/{babyId}/members/{uid}        who follows the baby and their role
+//   babies/{babyId}/logs/{logId}         feeding, sleep, diaper, kicks, ...
+//   babies/{babyId}/appointments/{id}    checkups, vaccines
+//   babies/{babyId}/tasks/{id}           shared to-do list
+//   invites/{code}                       server-only (Cloud Functions)
+//
+// Roles per baby: owner > editor (can log) > viewer (read only).
+// Membership changes after the baby is created go through Cloud Functions,
+// because they must update both members/{uid} and users/{uid}/memberships.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function memberDoc(babyId) {
+      return /databases/$(database)/documents/babies/$(babyId)/members/$(request.auth.uid);
+    }
+
+    function isMember(babyId) {
+      return signedIn() && exists(memberDoc(babyId));
+    }
+
+    function roleOf(babyId) {
+      return get(memberDoc(babyId)).data.role;
+    }
+
+    function canWrite(babyId) {
+      return isMember(babyId) && roleOf(babyId) in ['owner', 'editor'];
+    }
+
+    function babyAfter(babyId) {
+      return getAfter(/databases/$(database)/documents/babies/$(babyId)).data;
+    }
+
+    function unchanged(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null);
+    }
+
+    function validRelation(r) {
+      return r in ['mother', 'father', 'grandparent', 'caregiver', 'other'];
+    }
+
+    function validBaby(d) {
+      return d.keys().hasOnly([
+          'name', 'stage', 'dueDate', 'birthDate', 'sex', 'multiple',
+          'ownerId', 'region', 'photoPath', 'premium', 'createdAt', 'updatedAt'
+        ])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 60
+        && d.stage in ['pregnancy', 'born', 'ended']
+        && d.region in ['asia', 'europe', 'americas']
+        && (!('dueDate' in d) || d.dueDate is timestamp)
+        && (!('birthDate' in d) || d.birthDate is timestamp)
+        && (!('sex' in d) || d.sex in ['male', 'female', 'unspecified'])
+        && (!('multiple' in d) || d.multiple is bool);
+    }
+
+    function validLog(d) {
+      return d.keys().hasOnly([
+          'type', 'startedAt', 'endedAt', 'data', 'note',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && d.type in [
+          'breastfeed', 'bottle', 'pump', 'sleep', 'diaper', 'measurement',
+          'temperature', 'medicine', 'symptom', 'note', 'kick', 'contraction'
+        ]
+        && d.startedAt is timestamp
+        && (!('endedAt' in d) || d.endedAt == null || d.endedAt is timestamp)
+        && (!('data' in d) || d.data is map)
+        && (!('note' in d) || (d.note is string && d.note.size() <= 2000));
+    }
+
+    // Shared shape for appointments and tasks.
+    function validItem(d) {
+      return d.keys().hasOnly([
+          'kind', 'title', 'at', 'place', 'note', 'done', 'assignees', 'remindBefore',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && d.title is string && d.title.size() > 0 && d.title.size() <= 200
+        && (!('assignees' in d) || (d.assignees is list && d.assignees.size() <= 20));
+    }
+
+    match /users/{userId} {
+      allow read: if isUser(userId);
+      allow create: if isUser(userId) && !('premium' in request.resource.data);
+      allow update: if isUser(userId) && unchanged('premium');
+      allow delete: if false; // deleteAccount function
+
+      match /memberships/{babyId} {
+        allow read: if isUser(userId);
+        // Only the owner's own membership, written in the same batch that creates the baby.
+        allow create: if isUser(userId)
+          && request.resource.data.role == 'owner'
+          && babyAfter(babyId).ownerId == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      match /devices/{deviceId} {
+        allow read, write: if isUser(userId);
+      }
+
+      // Mom's own data (weight, recovery, mood). Shared copies are written by functions later.
+      match /private/{docId} {
+        allow read, write: if isUser(userId);
+      }
+    }
+
+    match /babies/{babyId} {
+      allow read: if isMember(babyId);
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && !('premium' in request.resource.data)
+        && validBaby(request.resource.data)
+        && existsAfter(/databases/$(database)/documents/babies/$(babyId)/members/$(request.auth.uid));
+
+      allow update: if canWrite(babyId)
+        && unchanged('ownerId')
+        && unchanged('region')
+        && unchanged('premium')
+        && validBaby(request.resource.data);
+
+      allow delete: if false; // deleteBaby / deleteAccount functions
+
+      match /members/{memberId} {
+        allow read: if isMember(babyId);
+        // The creator becomes the owner in the same batch that creates the baby.
+        allow create: if signedIn()
+          && memberId == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && validRelation(request.resource.data.relation)
+          && babyAfter(babyId).ownerId == request.auth.uid;
+        allow update, delete: if false; // setMemberRole / removeMember functions
+      }
+
+      match /logs/{logId} {
+        allow read: if isMember(babyId);
+        allow create: if canWrite(babyId)
+          && request.resource.data.createdBy == request.auth.uid
+          && validLog(request.resource.data);
+        allow update: if canWrite(babyId)
+          && unchanged('createdBy')
+          && unchanged('createdAt')
+          && request.resource.data.updatedBy == request.auth.uid
+          && validLog(request.resource.data);
+        allow delete: if canWrite(babyId);
+      }
+
+      match /appointments/{itemId} {
+        allow read: if isMember(babyId);
+        allow create: if canWrite(babyId)
+          && request.resource.data.createdBy == request.auth.uid
+          && validItem(request.resource.data);
+        allow update: if canWrite(babyId) && unchanged('createdBy') && validItem(request.resource.data);
+        allow delete: if canWrite(babyId);
+      }
+
+      match /tasks/{itemId} {
+        allow read: if isMember(babyId);
+        allow create: if canWrite(babyId)
+          && request.resource.data.createdBy == request.auth.uid
+          && validItem(request.resource.data);
+        allow update: if canWrite(babyId) && unchanged('createdBy') && validItem(request.resource.data);
+        allow delete: if canWrite(babyId);
+      }
+    }
+
+    match /invites/{code} {
+      allow read, write: if false;
+    }
+  }
+}

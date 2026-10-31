@@ -1,0 +1,24 @@
+{
+  "name": "bloomkin-backend",
+  "private": true,
+  "description": "Firebase backend for Bloomkin: Firestore and Storage rules, Cloud Functions, and their tests.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.12"
+  },
+  "scripts": {
+    "build": "npm --prefix functions run build",
+    "test": "npm --prefix functions test && npm run test:rules && npm run test:integration",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-bloomkin \"vitest run tests/firestore.rules.test.ts\"",
+    "emulators": "npm run build && firebase emulators:start --project dev --import ./.emulator-data --export-on-exit",
+    "deploy:dev": "firebase deploy --project dev",
+    "deploy:prod": "firebase deploy --project prod",
+    "test:integration": "npm run build && firebase emulators:exec --only auth,firestore,functions --project demo-bloomkin \"vitest run tests/integration\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.1.0",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
