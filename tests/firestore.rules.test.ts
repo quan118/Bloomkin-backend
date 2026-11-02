@@ -149,6 +149,30 @@ describe('membership', () => {
     const db = env.authenticatedContext('mai').firestore();
     await assertFails(updateDoc(doc(db, 'babies/na'), { name: 'X' }));
   });
+
+  it('lets an editor report the birth', async () => {
+    const db = env.authenticatedContext('minh').firestore();
+    await assertSucceeds(
+      updateDoc(doc(db, 'babies/na'), { stage: 'born', birthDate: now(), sex: 'female', updatedAt: now() }),
+    );
+  });
+
+  it('lets only the owner end a pregnancy', async () => {
+    const editor = env.authenticatedContext('minh').firestore();
+    await assertFails(updateDoc(doc(editor, 'babies/na'), { stage: 'ended', updatedAt: now() }));
+    const owner = env.authenticatedContext('lan').firestore();
+    await assertSucceeds(updateDoc(doc(owner, 'babies/na'), { stage: 'ended', updatedAt: now() }));
+  });
+
+  it('lets only the owner resume an ended pregnancy', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), 'babies/na'), { stage: 'ended' });
+    });
+    const editor = env.authenticatedContext('minh').firestore();
+    await assertFails(updateDoc(doc(editor, 'babies/na'), { stage: 'pregnancy', updatedAt: now() }));
+    const owner = env.authenticatedContext('lan').firestore();
+    await assertSucceeds(updateDoc(doc(owner, 'babies/na'), { stage: 'pregnancy', updatedAt: now() }));
+  });
 });
 
 describe('logs', () => {

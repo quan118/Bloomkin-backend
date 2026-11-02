@@ -68,6 +68,16 @@ service cloud.firestore {
         && (!('multiple' in d) || d.multiple is bool);
     }
 
+    // Anyone who can log may report the birth. Other stage changes (ending a pregnancy,
+    // resuming it) are for the owner only.
+    function stageChangeAllowed(babyId) {
+      let before = resource.data.stage;
+      let after = request.resource.data.stage;
+      return before == after
+        || (before == 'pregnancy' && after == 'born')
+        || roleOf(babyId) == 'owner';
+    }
+
     function validLog(d) {
       return d.keys().hasOnly([
           'type', 'startedAt', 'endedAt', 'data', 'note',
@@ -131,6 +141,7 @@ service cloud.firestore {
         && unchanged('ownerId')
         && unchanged('region')
         && unchanged('premium')
+        && stageChangeAllowed(babyId)
         && validBaby(request.resource.data);
 
       allow delete: if false; // deleteBaby / deleteAccount functions
