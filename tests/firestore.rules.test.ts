@@ -6,7 +6,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, writeBatch, Timestamp, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, writeBatch, Timestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 
 let env: RulesTestEnvironment;
@@ -155,6 +155,24 @@ describe('membership', () => {
     await assertSucceeds(
       updateDoc(doc(db, 'babies/na'), { stage: 'born', birthDate: now(), sex: 'female', updatedAt: now() }),
     );
+  });
+
+  it('lets an editor undo a birth reported by mistake', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), 'babies/na'), { stage: 'born', birthDate: now(), sex: 'female' });
+    });
+    const editor = env.authenticatedContext('minh').firestore();
+    await assertFails(updateDoc(doc(editor, 'babies/na'), { stage: 'ended', updatedAt: now() }));
+    await assertSucceeds(
+      updateDoc(doc(editor, 'babies/na'), {
+        stage: 'pregnancy',
+        birthDate: deleteField(),
+        sex: deleteField(),
+        updatedAt: now(),
+      }),
+    );
+    const viewer = env.authenticatedContext('mai').firestore();
+    await assertFails(updateDoc(doc(viewer, 'babies/na'), { stage: 'born', updatedAt: now() }));
   });
 
   it('lets only the owner end a pregnancy', async () => {

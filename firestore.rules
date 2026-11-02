@@ -68,13 +68,14 @@ service cloud.firestore {
         && (!('multiple' in d) || d.multiple is bool);
     }
 
-    // Anyone who can log may report the birth. Other stage changes (ending a pregnancy,
-    // resuming it) are for the owner only.
+    // Anyone who can log may report the birth, or undo a birth reported by mistake.
+    // Other stage changes (ending a pregnancy, resuming it) are for the owner only.
     function stageChangeAllowed(babyId) {
       let before = resource.data.stage;
       let after = request.resource.data.stage;
       return before == after
         || (before == 'pregnancy' && after == 'born')
+        || (before == 'born' && after == 'pregnancy')
         || roleOf(babyId) == 'owner';
     }
 
