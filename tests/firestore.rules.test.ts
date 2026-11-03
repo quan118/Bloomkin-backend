@@ -225,6 +225,23 @@ describe('logs', () => {
     await assertFails(updateDoc(doc(db, 'babies/na/logs/l1'), { createdBy: 'lan', updatedBy: 'lan' }));
   });
 
+  it('accepts a moment with photos', async () => {
+    const db = env.authenticatedContext('minh').firestore();
+    const photos = [{ id: 'p1', w: 1600, h: 1200 }];
+    await assertSucceeds(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { type: 'moment', photos, hasPhotos: true })));
+  });
+
+  it('rejects more than 6 photos on a log', async () => {
+    const db = env.authenticatedContext('minh').firestore();
+    const photos = Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, w: 100, h: 100 }));
+    await assertFails(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos, hasPhotos: true })));
+  });
+
+  it('rejects photos that are not a list', async () => {
+    const db = env.authenticatedContext('minh').firestore();
+    await assertFails(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos: 'p1', hasPhotos: 'yes' })));
+  });
+
   it('lets a viewer read but not delete logs', async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'babies/na/logs/l1'), logData('minh'));

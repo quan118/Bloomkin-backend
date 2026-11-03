@@ -81,17 +81,20 @@ service cloud.firestore {
 
     function validLog(d) {
       return d.keys().hasOnly([
-          'type', 'startedAt', 'endedAt', 'data', 'note',
+          'type', 'startedAt', 'endedAt', 'data', 'note', 'photos', 'hasPhotos',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && d.type in [
           'breastfeed', 'bottle', 'pump', 'sleep', 'diaper', 'measurement',
-          'temperature', 'medicine', 'symptom', 'note', 'kick', 'contraction'
+          'temperature', 'medicine', 'symptom', 'note', 'kick', 'contraction', 'moment'
         ]
         && d.startedAt is timestamp
         && (!('endedAt' in d) || d.endedAt == null || d.endedAt is timestamp)
         && (!('data' in d) || d.data is map)
-        && (!('note' in d) || (d.note is string && d.note.size() <= 2000));
+        && (!('note' in d) || (d.note is string && d.note.size() <= 2000))
+        // Photo files live in Storage under babies/{babyId}/logs/{logId}/. At most 6 per log.
+        && (!('photos' in d) || (d.photos is list && d.photos.size() <= 6))
+        && (!('hasPhotos' in d) || d.hasPhotos is bool);
     }
 
     // Shared shape for appointments and tasks.

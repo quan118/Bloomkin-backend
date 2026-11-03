@@ -24,6 +24,7 @@ export const LOG_TYPES = [
   'note',
   'kick',
   'contraction',
+  'moment',
 ] as const;
 export type LogType = (typeof LOG_TYPES)[number];
 

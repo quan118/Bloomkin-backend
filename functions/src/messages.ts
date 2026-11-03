@@ -14,6 +14,7 @@ const LOG_LABELS: Record<Locale, Record<LogType, string>> = {
     note: 'ghi chú',
     kick: 'cử động thai',
     contraction: 'cơn gò',
+    moment: 'một khoảnh khắc',
   },
   en: {
     breastfeed: 'a breastfeed',
@@ -28,6 +29,7 @@ const LOG_LABELS: Record<Locale, Record<LogType, string>> = {
     note: 'a note',
     kick: 'kick counts',
     contraction: 'contractions',
+    moment: 'a moment',
   },
 };
 
