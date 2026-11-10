@@ -1,6 +1,9 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
-import { bucket } from './admin.js';
+import { bucket, db } from './admin.js';
+import { paths as dbPaths } from './model.js';
+import { photoCountChange } from './premium.js';
 
 function photoIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -22,10 +25,27 @@ export function removedPhotoPaths(
     .flatMap((id) => [`babies/${babyId}/logs/${logId}/${id}.jpg`, `babies/${babyId}/logs/${logId}/${id}_t.jpg`]);
 }
 
-/** Deletes photo files once they are taken off a log, or when the log itself is deleted. */
+/**
+ * Deletes photo files once they are taken off a log, or when the log itself is deleted,
+ * and keeps the baby's `photoCount` up to date for the free photo limit.
+ */
 export const onLogPhotosChanged = onDocumentWritten('babies/{babyId}/logs/{logId}', async (event) => {
   const { babyId, logId } = event.params;
-  const paths = removedPhotoPaths(babyId, logId, event.data?.before.data(), event.data?.after.data());
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+
+  const change = photoCountChange(before, after);
+  if (change !== 0) {
+    await db()
+      .doc(dbPaths.baby(babyId))
+      .update({ photoCount: FieldValue.increment(change) })
+      .catch((err: unknown) => {
+        // The baby is being deleted along with its logs.
+        if ((err as { code?: number }).code !== 5) throw err; // 5 = NOT_FOUND
+      });
+  }
+
+  const paths = removedPhotoPaths(babyId, logId, before, after);
   await Promise.all(
     paths.map((path) =>
       bucket()

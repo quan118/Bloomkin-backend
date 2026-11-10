@@ -68,6 +68,10 @@ describe('invite flow', () => {
     const preview = await minh.call('previewInvite', { code: code.toLowerCase().replace('-', ' ') });
     expect(preview.data).toMatchObject({ inviterName: 'Lan', role: 'editor', babies: [{ id: babyId, name: 'Na' }] });
 
+    // A second code made while the baby still has room for one more person.
+    const spare = await lan.call('createInvite', { babyIds: [babyId], role: 'viewer', relation: 'grandparent' });
+    const spareCode = (spare.data as { code: string }).code;
+
     // Minh cannot read the baby before accepting.
     await expect(getDoc(doc(minh.db, 'babies', babyId))).rejects.toThrow();
 
@@ -90,6 +94,12 @@ describe('invite flow', () => {
     // The same code cannot be used twice.
     const mai = await signUp('Mai');
     await expect(mai.call('acceptInvite', { code })).rejects.toThrow(/invite-used/);
+
+    // A free baby has room for the owner and one more person.
+    await expect(mai.call('acceptInvite', { code: spareCode })).rejects.toThrow(/family-full/);
+    await expect(
+      lan.call('createInvite', { babyIds: [babyId], role: 'viewer', relation: 'grandparent' }),
+    ).rejects.toThrow(/premium-required/);
 
     // Only the owner can change roles.
     await expect(

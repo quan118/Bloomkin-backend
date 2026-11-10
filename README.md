@@ -10,11 +10,11 @@ Firebase backend for the Bloomkin app: Firestore and Storage security rules, Clo
 ## Data model
 
 ```
-users/{uid}                          profile (displayName, locale, mutedBabies); `premium` is server-only
+users/{uid}                          profile (displayName, locale, mutedBabies); `premium`, `ownedBabies` are server-only
 users/{uid}/memberships/{babyId}     babies this user follows: { role, relation }
 users/{uid}/devices/{deviceId}       push tokens: { token, platform }
 users/{uid}/private/{doc}            mom's own data (weight, recovery, mood)
-babies/{babyId}                      { name, stage, dueDate, birthDate, sex, ownerId, region, premium }
+babies/{babyId}                      { name, stage, dueDate, birthDate, sex, ownerId, region, premium, photoCount }
 babies/{babyId}/members/{uid}        { role, relation, displayName, joinedAt }
 babies/{babyId}/logs/{logId}         { type, startedAt, endedAt, data, note, createdBy, updatedBy, ... }
 babies/{babyId}/appointments/{id}    checkups and vaccines
@@ -41,6 +41,22 @@ both `babies/{id}/members/{uid}` and `users/{uid}/memberships/{id}`.
 | `onBabyCreated` | Firestore trigger | Copies the owner's active Premium to a new baby |
 | `onLogCreated` | Firestore trigger | Pushes "Minh logged a diaper change" to the other followers |
 | `revenuecatWebhook` | HTTPS | Stores Premium on the user and every baby they own |
+| `onBabyWritten` | Firestore trigger | Keeps `users/{uid}.ownedBabies` for the free baby limit |
+
+The `onLogPhotosChanged` trigger also keeps `babies/{id}.photoCount` for the free photo limit.
+
+## Free plan limits
+
+Free accounts get 1 baby (ended pregnancies don't count), 2 people per baby (owner included)
+and 50 photos per baby. Premium removes all three. The numbers live in `FREE_LIMITS`
+(`functions/src/model.ts`), in `firestore.rules` and in the app's `src/domain/premium.ts`.
+
+| Limit | Enforced by |
+| --- | --- |
+| Babies | `firestore.rules` reads `users/{uid}.ownedBabies` when a baby is created |
+| People | `createInvite` (`premium-required`) and `acceptInvite` (`family-full`) |
+| Photos | `firestore.rules` reads `babies/{id}.photoCount` when a log's photos grow |
+
 
 ## Run locally
 

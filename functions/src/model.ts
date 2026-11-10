@@ -51,3 +51,16 @@ export interface PremiumState {
   expiresAt: number | null;
   productId: string | null;
 }
+
+/**
+ * What a free account gets. Premium removes these limits.
+ * The same numbers are in firestore.rules and the app's src/domain/premium.ts.
+ */
+export const FREE_LIMITS = {
+  /** Babies a user owns that are not ended pregnancies. */
+  babies: 1,
+  /** People on one baby, counting the owner. */
+  members: 2,
+  /** Photos on one baby's logs. */
+  photos: 50,
+} as const;

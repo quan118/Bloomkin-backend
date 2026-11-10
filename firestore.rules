@@ -1,10 +1,10 @@
 rules_version = '2';
 
 // Data model (see README.md):
-//   users/{uid}                          profile; `premium` is server-only
+//   users/{uid}                          profile; `premium` and `ownedBabies` are server-only
 //   users/{uid}/memberships/{babyId}     index of the babies a user follows
 //   users/{uid}/devices/{deviceId}       push tokens
-//   babies/{babyId}                      baby profile; `premium` is server-only
+//   babies/{babyId}                      baby profile; `premium` and `photoCount` are server-only
 //   babies/{babyId}/members/{uid}        who follows the baby and their role
 //   babies/{babyId}/logs/{logId}         feeding, sleep, diaper, kicks, ...
 //   babies/{babyId}/appointments/{id}    checkups, vaccines
@@ -12,6 +12,10 @@ rules_version = '2';
 //   invites/{code}                       server-only (Cloud Functions)
 //
 // Roles per baby: owner > editor (can log) > viewer (read only).
+//
+// Free plan limits (same numbers as FREE_LIMITS in functions/src/model.ts):
+//   1 baby owned (ended pregnancies don't count), 50 photos per baby.
+//   The 2-people-per-baby limit is checked by the invite functions.
 // Membership changes after the baby is created go through Cloud Functions,
 // because they must update both members/{uid} and users/{uid}/memberships.
 
@@ -50,6 +54,35 @@ service cloud.firestore {
       return request.resource.data.get(field, null) == resource.data.get(field, null);
     }
 
+    // Premium as stored by the RevenueCat webhook: { active, expiresAt (ms or null), ... }.
+    function premiumActive(d) {
+      let p = d.get('premium', null);
+      return p != null
+        && p.get('active', false) == true
+        && (p.get('expiresAt', null) == null || p.expiresAt > request.time.toMillis());
+    }
+
+    function ownerDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // `ownedBabies` is kept up to date by the onBabyWritten function.
+    function canAddBaby() {
+      return !exists(ownerDoc())
+        || premiumActive(get(ownerDoc()).data)
+        || get(ownerDoc()).data.get('ownedBabies', 0) < 1;
+    }
+
+    function photosOn(d) {
+      return d.get('photos', []).size();
+    }
+
+    // `photoCount` is kept up to date by the onLogPhotosChanged function.
+    function canAddPhotos(babyId, added) {
+      let baby = get(/databases/$(database)/documents/babies/$(babyId)).data;
+      return added <= 0 || premiumActive(baby) || baby.get('photoCount', 0) + added <= 50;
+    }
+
     function validRelation(r) {
       return r in ['mother', 'father', 'grandparent', 'caregiver', 'other'];
     }
@@ -57,7 +90,7 @@ service cloud.firestore {
     function validBaby(d) {
       return d.keys().hasOnly([
           'name', 'stage', 'dueDate', 'birthDate', 'sex', 'multiple',
-          'ownerId', 'region', 'photoPath', 'premium', 'createdAt', 'updatedAt'
+          'ownerId', 'region', 'photoPath', 'premium', 'photoCount', 'createdAt', 'updatedAt'
         ])
         && d.name is string && d.name.size() > 0 && d.name.size() <= 60
         && d.stage in ['pregnancy', 'born', 'ended']
@@ -109,8 +142,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isUser(userId);
-      allow create: if isUser(userId) && !('premium' in request.resource.data);
-      allow update: if isUser(userId) && unchanged('premium');
+      allow create: if isUser(userId)
+        && !('premium' in request.resource.data)
+        && !('ownedBabies' in request.resource.data);
+      allow update: if isUser(userId) && unchanged('premium') && unchanged('ownedBabies');
       allow delete: if false; // deleteAccount function
 
       match /memberships/{babyId} {
@@ -138,6 +173,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
         && !('premium' in request.resource.data)
+        && !('photoCount' in request.resource.data)
+        && canAddBaby()
         && validBaby(request.resource.data)
         && existsAfter(/databases/$(database)/documents/babies/$(babyId)/members/$(request.auth.uid));
 
@@ -145,6 +182,7 @@ service cloud.firestore {
         && unchanged('ownerId')
         && unchanged('region')
         && unchanged('premium')
+        && unchanged('photoCount')
         && stageChangeAllowed(babyId)
         && validBaby(request.resource.data);
 
@@ -165,12 +203,14 @@ service cloud.firestore {
         allow read: if isMember(babyId);
         allow create: if canWrite(babyId)
           && request.resource.data.createdBy == request.auth.uid
-          && validLog(request.resource.data);
+          && validLog(request.resource.data)
+          && canAddPhotos(babyId, photosOn(request.resource.data));
         allow update: if canWrite(babyId)
           && unchanged('createdBy')
           && unchanged('createdAt')
           && request.resource.data.updatedBy == request.auth.uid
-          && validLog(request.resource.data);
+          && validLog(request.resource.data)
+          && canAddPhotos(babyId, photosOn(request.resource.data) - photosOn(resource.data));
         allow delete: if canWrite(babyId);
       }
 

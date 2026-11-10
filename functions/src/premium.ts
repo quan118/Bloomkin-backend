@@ -1,4 +1,4 @@
-import type { PremiumState } from './model.js';
+import { FREE_LIMITS, type PremiumState } from './model.js';
 
 /** The fields of a RevenueCat webhook event that Bloomkin uses. */
 export interface RevenueCatEvent {
@@ -42,4 +42,28 @@ export function premiumStateFromEvent(event: RevenueCatEvent, nowMs: number): Pr
     return { active, expiresAt, productId };
   }
   return null;
+}
+
+/** True while a stored premium state is switched on and not past its expiry. */
+export function isPremiumActive(premium: Partial<PremiumState> | null | undefined, nowMs: number): boolean {
+  if (!premium?.active) return false;
+  return premium.expiresAt == null || premium.expiresAt > nowMs;
+}
+
+/** True when a free baby already has as many people as the free plan allows. */
+export function memberLimitReached(
+  premium: Partial<PremiumState> | null | undefined,
+  memberCount: number,
+  nowMs: number,
+): boolean {
+  return !isPremiumActive(premium, nowMs) && memberCount >= FREE_LIMITS.members;
+}
+
+/** How many photos a log write adds (negative when photos are taken off or the log is deleted). */
+export function photoCountChange(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+): number {
+  const size = (d: Record<string, unknown> | undefined) => (Array.isArray(d?.photos) ? d.photos.length : 0);
+  return size(after) - size(before);
 }

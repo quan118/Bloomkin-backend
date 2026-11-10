@@ -107,6 +107,69 @@ describe('creating a baby', () => {
   });
 });
 
+describe('free plan: one baby', () => {
+  function createBaby(db: ReturnType<ReturnType<RulesTestEnvironment['authenticatedContext']>['firestore']>, id: string) {
+    const batch = writeBatch(db);
+    batch.set(doc(db, `babies/${id}`), babyData('lan'));
+    batch.set(doc(db, `babies/${id}/members/lan`), { role: 'owner', relation: 'mother' });
+    batch.set(doc(db, `users/lan/memberships/${id}`), { role: 'owner', relation: 'mother' });
+    return batch.commit();
+  }
+
+  const nextYear = () => Date.now() + 365 * 24 * 60 * 60 * 1000;
+
+  it('stops a free user who already owns a baby from creating another', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/lan'), { displayName: 'Lan', ownedBabies: 1 });
+    });
+    await assertFails(createBaby(env.authenticatedContext('lan').firestore(), 'b2'));
+  });
+
+  it('lets a free user create a baby when their only other one is an ended pregnancy', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/lan'), { displayName: 'Lan', ownedBabies: 0 });
+    });
+    await assertSucceeds(createBaby(env.authenticatedContext('lan').firestore(), 'b2'));
+  });
+
+  it('lets a Premium user create more babies', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/lan'), {
+        ownedBabies: 3,
+        premium: { active: true, expiresAt: nextYear(), productId: 'annual' },
+      });
+    });
+    await assertSucceeds(createBaby(env.authenticatedContext('lan').firestore(), 'b2'));
+  });
+
+  it('treats expired Premium as free', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/lan'), {
+        ownedBabies: 1,
+        premium: { active: true, expiresAt: Date.now() - 1000, productId: 'annual' },
+      });
+    });
+    await assertFails(createBaby(env.authenticatedContext('lan').firestore(), 'b2'));
+  });
+
+  it('stops a user from changing their own baby count', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users/lan'), { displayName: 'Lan', ownedBabies: 1 });
+    });
+    const db = env.authenticatedContext('lan').firestore();
+    await assertFails(updateDoc(doc(db, 'users/lan'), { ownedBabies: 0 }));
+    await assertSucceeds(updateDoc(doc(db, 'users/lan'), { displayName: 'Lan Anh' }));
+  });
+
+  it('rejects a client-set photo count', async () => {
+    const db = env.authenticatedContext('lan').firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'babies/b1'), babyData('lan', { photoCount: -100 }));
+    batch.set(doc(db, 'babies/b1/members/lan'), { role: 'owner', relation: 'mother' });
+    await assertFails(batch.commit());
+  });
+});
+
 describe('membership', () => {
   beforeEach(seedBaby);
 
@@ -240,6 +303,50 @@ describe('logs', () => {
   it('rejects photos that are not a list', async () => {
     const db = env.authenticatedContext('minh').firestore();
     await assertFails(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos: 'p1', hasPhotos: 'yes' })));
+  });
+
+  describe('free plan: 50 photos per baby', () => {
+    const photos = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, w: 100, h: 100 }));
+    const setPhotoCount = (photoCount: number, extra: Record<string, unknown> = {}) =>
+      env.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), 'babies/na'), { photoCount, ...extra });
+      });
+
+    it('accepts photos up to the limit', async () => {
+      await setPhotoCount(47);
+      const db = env.authenticatedContext('minh').firestore();
+      await assertSucceeds(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos: photos(3), hasPhotos: true })));
+    });
+
+    it('rejects photos past the limit', async () => {
+      await setPhotoCount(48);
+      const db = env.authenticatedContext('minh').firestore();
+      await assertFails(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos: photos(3), hasPhotos: true })));
+      // Logs without photos still work.
+      await assertSucceeds(setDoc(doc(db, 'babies/na/logs/l2'), logData('minh')));
+    });
+
+    it('only counts photos added by an edit, and always allows removing them', async () => {
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), 'babies/na/logs/l1'), logData('minh', { photos: photos(4), hasPhotos: true }));
+      });
+      await setPhotoCount(50);
+      const db = env.authenticatedContext('minh').firestore();
+      await assertSucceeds(updateDoc(doc(db, 'babies/na/logs/l1'), { note: 'hi', updatedBy: 'minh' }));
+      await assertSucceeds(updateDoc(doc(db, 'babies/na/logs/l1'), { photos: photos(2), updatedBy: 'minh' }));
+      await assertFails(updateDoc(doc(db, 'babies/na/logs/l1'), { photos: photos(3), updatedBy: 'minh' }));
+    });
+
+    it('has no limit on a Premium baby', async () => {
+      await setPhotoCount(500, { premium: { active: true, expiresAt: null, productId: 'lifetime', ownerId: 'lan' } });
+      const db = env.authenticatedContext('minh').firestore();
+      await assertSucceeds(setDoc(doc(db, 'babies/na/logs/l1'), logData('minh', { photos: photos(6), hasPhotos: true })));
+    });
+
+    it('stops anyone from changing the photo count', async () => {
+      const db = env.authenticatedContext('lan').firestore();
+      await assertFails(updateDoc(doc(db, 'babies/na'), { photoCount: 0 }));
+    });
   });
 
   it('lets a viewer read but not delete logs', async () => {

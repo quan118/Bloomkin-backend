@@ -3,6 +3,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { db } from './admin.js';
 import { generateInviteCode, normalizeInviteCode } from './inviteCode.js';
+import { memberLimitReached } from './premium.js';
 import {
   INVITE_ROLES,
   INVITE_TTL_DAYS,
@@ -46,6 +47,16 @@ export const createInvite = onCall(async (req) => {
   const input = parseInput(createSchema, req.data);
   const babyIds = [...new Set(input.babyIds)];
   for (const babyId of babyIds) await requireOwner(babyId, uid);
+  // Ask the owner to upgrade now, not when the other person tries to join.
+  for (const babyId of babyIds) {
+    const [baby, members] = await Promise.all([
+      db().doc(paths.baby(babyId)).get(),
+      db().collection(paths.members(babyId)).count().get(),
+    ]);
+    if (memberLimitReached(baby.get('premium'), members.data().count, Date.now())) {
+      throw new HttpsError('failed-precondition', 'premium-required');
+    }
+  }
 
   const now = Timestamp.now();
   const expiresAt = Timestamp.fromMillis(now.toMillis() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000);
@@ -129,6 +140,19 @@ export const acceptInvite = onCall(async (req) => {
 
     const userSnap = await tx.get(db().doc(paths.user(uid)));
     const memberSnaps = await Promise.all(invite.babyIds.map((id) => tx.get(db().doc(paths.member(id, uid)))));
+
+    // A free baby can have only so many people. The invite stays unused, so it
+    // works once the owner upgrades.
+    for (const [i, babyId] of invite.babyIds.entries()) {
+      if (memberSnaps[i]?.exists) continue;
+      const [baby, members] = await Promise.all([
+        tx.get(db().doc(paths.baby(babyId))),
+        tx.get(db().collection(paths.members(babyId))),
+      ]);
+      if (memberLimitReached(baby.get('premium'), members.size, Date.now())) {
+        throw new HttpsError('failed-precondition', 'family-full');
+      }
+    }
     const displayName = (userSnap.get('displayName') as string | undefined) ?? tokenName ?? '';
     const relation = input.relation ?? invite.relation;
     const joinedAt = FieldValue.serverTimestamp();
