@@ -9,6 +9,17 @@ export function requireAuth(req: CallableRequest<unknown>): string {
   return uid;
 }
 
+/**
+ * Email-and-password accounts must confirm their email before sharing a baby with anyone,
+ * so invites only ever connect real addresses. Apple sign-in is already verified by Apple.
+ */
+export function requireVerifiedEmail(req: CallableRequest<unknown>): void {
+  const token = req.auth?.token;
+  if (token?.firebase?.sign_in_provider === 'password' && token.email_verified !== true) {
+    throw new HttpsError('failed-precondition', 'email-unverified');
+  }
+}
+
 export function parseInput<T extends z.ZodType>(schema: T, data: unknown): z.infer<T> {
   const result = schema.safeParse(data);
   if (!result.success) {

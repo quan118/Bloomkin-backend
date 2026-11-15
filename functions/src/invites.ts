@@ -13,7 +13,7 @@ import {
   type InviteRole,
   type Relation,
 } from './model.js';
-import { parseInput, requireAuth, requireOwner } from './util.js';
+import { parseInput, requireAuth, requireOwner, requireVerifiedEmail } from './util.js';
 
 interface InviteDoc {
   babyIds: string[];
@@ -44,6 +44,7 @@ const createSchema = z.object({
 /** Owner creates a one-time code that adds someone to one or more babies. */
 export const createInvite = onCall(async (req) => {
   const uid = requireAuth(req);
+  requireVerifiedEmail(req);
   const input = parseInput(createSchema, req.data);
   const babyIds = [...new Set(input.babyIds)];
   for (const babyId of babyIds) await requireOwner(babyId, uid);
@@ -126,6 +127,7 @@ const acceptSchema = z.object({
 /** Adds the signed-in user to every baby in the invite and marks the code as used. */
 export const acceptInvite = onCall(async (req) => {
   const uid = requireAuth(req);
+  requireVerifiedEmail(req);
   const input = parseInput(acceptSchema, req.data);
   const inviteRef = db().doc(paths.invite(input.code));
   const tokenName = (req.auth?.token.name as string | undefined) ?? null;

@@ -1,7 +1,7 @@
 // End-to-end check of the invite flow against the Auth, Firestore and Functions emulators.
 // Run with: npm run test:integration
 import { initializeApp, deleteApp, type FirebaseApp } from 'firebase/app';
-import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, updateProfile } from 'firebase/auth';
+import { connectAuthEmulator, createUserWithEmailAndPassword, getAuth, getIdToken, updateProfile, type User } from 'firebase/auth';
 import {
   connectFirestoreEmulator,
   doc,
@@ -18,7 +18,22 @@ const PROJECT = process.env.GCLOUD_PROJECT ?? 'demo-bloomkin';
 const REGION = 'asia-southeast1';
 const apps: FirebaseApp[] = [];
 
-async function signUp(name: string) {
+/** Marks the account's email as confirmed in the Auth emulator, then refreshes its ID token. */
+async function verifyEmail(user: User) {
+  const res = await fetch(
+    `http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/projects/${PROJECT}/accounts:update`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' },
+      body: JSON.stringify({ localId: user.uid, emailVerified: true }),
+    },
+  );
+  if (!res.ok) throw new Error(`verifyEmail failed: ${res.status}`);
+  await user.reload();
+  await getIdToken(user, true);
+}
+
+async function signUp(name: string, { verified = true } = {}) {
   const app = initializeApp({ projectId: PROJECT, apiKey: 'demo-key' }, `${name}-${Date.now()}`);
   apps.push(app);
   const auth = getAuth(app);
@@ -31,7 +46,13 @@ async function signUp(name: string) {
   const cred = await createUserWithEmailAndPassword(auth, `${name}-${Date.now()}@example.com`, 'password123');
   await updateProfile(cred.user, { displayName: name });
   await setDoc(doc(db, 'users', cred.user.uid), { displayName: name, locale: 'vi' });
-  return { uid: cred.user.uid, db, call: (fn: string, data: unknown) => httpsCallable(fns, fn)(data) };
+  if (verified) await verifyEmail(cred.user);
+  return {
+    uid: cred.user.uid,
+    user: cred.user,
+    db,
+    call: (fn: string, data: unknown) => httpsCallable(fns, fn)(data),
+  };
 }
 
 afterAll(async () => {
@@ -108,5 +129,19 @@ describe('invite flow', () => {
     await lan.call('setMemberRole', { babyId, memberId: minh.uid, role: 'viewer' });
     const membership = await getDoc(doc(minh.db, 'users', minh.uid, 'memberships', babyId));
     expect(membership.get('role')).toBe('viewer');
+  });
+
+  it('asks email accounts to confirm their email before inviting or joining', async () => {
+    const hoa = await signUp('Hoa', { verified: false });
+    await expect(
+      hoa.call('createInvite', { babyIds: ['any-baby'], role: 'editor', relation: 'father' }),
+    ).rejects.toThrow(/email-unverified/);
+    await expect(hoa.call('acceptInvite', { code: 'AAAA-BBBB' })).rejects.toThrow(/email-unverified/);
+    // Previewing stays open, so someone can see an invite before confirming.
+    await expect(hoa.call('previewInvite', { code: 'AAAA-BBBB' })).rejects.toThrow(/invite-not-found/);
+
+    // Once confirmed, the same calls get past the check.
+    await verifyEmail(hoa.user);
+    await expect(hoa.call('acceptInvite', { code: 'AAAA-BBBB' })).rejects.toThrow(/invite-not-found/);
   });
 });
